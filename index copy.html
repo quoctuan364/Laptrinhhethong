@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Flood Sensor Dashboard</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #f5f6fa; }
+    .sidebar {
+      width: 200px; height: 100vh; background: #2f3640; color: white;
+      position: fixed; top: 0; left: 0; padding: 20px;
+    }
+    .sidebar h2 { margin-bottom: 30px; }
+    .sidebar a { display: block; color: #ccc; margin: 10px 0; text-decoration: none; }
+    .main { margin-left: 220px; padding: 20px; }
+    .cards {
+      display: grid; grid-template-columns: repeat(4,1fr);
+      gap: 15px; margin-bottom: 20px;
+    }
+    .card {
+      background: white; padding: 15px; border-radius: 10px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .btn {
+      display: inline-block; margin-top: 10px;
+      padding: 8px 16px; border: none; border-radius: 6px;
+      cursor: pointer; font-size: 14px; font-weight: bold;
+    }
+    .btn-on { background: green; color: white; }
+    .btn-off { background: red; color: white; }
+    canvas { background: white; border-radius: 10px; padding: 10px; }
+
+    /* Weather animation */
+    .weather {
+      position: fixed; right: 20px; top: 20px;
+      width: 120px; height: 120px;
+    }
+    .sun {
+      width: 60px; height: 60px; border-radius: 50%;
+      background: gold; margin: 30px auto;
+      box-shadow: 0 0 25px gold;
+      animation: spin 10s linear infinite;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    .cloud {
+      position: relative;
+      width: 100px; height: 60px; margin: 30px auto;
+    }
+    .cloud div {
+      position: absolute; background: #ccc;
+      border-radius: 50%;
+    }
+    .c1 { width: 60px; height: 60px; left: 0; top: 0; }
+    .c2 { width: 70px; height: 70px; left: 30px; top: -10px; }
+    .c3 { width: 50px; height: 50px; left: 60px; top: 10px; }
+
+    .rain {
+      position: absolute; width: 3px; height: 10px; background: blue;
+      top: 60px; border-radius: 2px;
+      animation: fall 1s linear infinite;
+    }
+    @keyframes fall {
+      from { transform: translateY(0); opacity: 1; }
+      to { transform: translateY(40px); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <h2>Dashboard</h2>
+    <a href="#">Home</a>
+    <a href="#">Sensors</a>
+    <a href="#">Settings</a>
+    <a href="#">Logout</a>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <h1>📡 Flood Sensor Dashboard</h1>
+
+    <!-- Cards -->
+    <div class="cards">
+      <div class="card">🌡 Nhiệt độ: <span id="temp">--</span> °C</div>
+      <div class="card">💧 Độ ẩm KK: <span id="hum">--</span> %</div>
+      <div class="card">🌧 Mưa RAW: <span id="rain">--</span></div>
+      <div class="card">💦 Nước RAW: <span id="water">--</span></div>
+      <div class="card">🌱 Đất RAW: <span id="soilRaw">--</span></div>
+      <div class="card">🌱 Đất %: <span id="soil">--</span>%</div>
+      <div class="card">🚩 Trạng thái: <span id="status">--</span></div>
+      <div class="card">💡 LED: <span id="led">--</span></div>
+      <div class="card">
+        🔌 Bơm: <span id="pump">--</span><br>
+        <button class="btn btn-on" onclick="controlPump('ON')">BẬT</button>
+        <button class="btn btn-off" onclick="controlPump('OFF')">TẮT</button>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <canvas id="lineChart" height="100"></canvas>
+    <br>
+    <canvas id="barChart" height="100"></canvas>
+    <br>
+    <canvas id="gaugeChart" width="150" height="150"></canvas>
+  </div>
+
+  <!-- Weather Animation -->
+  <div class="weather" id="weatherBox"></div>
+
+  <script>
+    // MQTT connect
+  const client = mqtt.connect("wss://72a1c30f840949618031af7b25ba5037.s1.eu.hivemq.cloud:8884/mqtt", {
+    username: "Thuan",
+    password: "Thuan@312"
+    });
+
+    const labels = [], tempData = [], humData = [];
+
+    // Line chart
+    const lineChart = new Chart(document.getElementById('lineChart'), {
+      type: 'line',
+      data: { labels: labels, datasets: [{ label: 'Nhiệt độ (°C)', data: tempData, borderColor: 'blue', fill: false }] }
+    });
+
+    // Bar chart
+    const barChart = new Chart(document.getElementById('barChart'), {
+      type: 'bar',
+      data: { labels: ["Nhiệt độ", "Độ ẩm"], datasets: [{ data: [0, 0], backgroundColor: ["red", "green"] }] }
+    });
+
+    // Gauge chart
+    const gaugeChart = new Chart(document.getElementById('gaugeChart'), {
+      type: 'doughnut',
+      data: { datasets: [{ data: [0, 100], backgroundColor: ['#4caf50', '#eee'], borderWidth: 0 }] },
+      options: {
+        rotation: -90, circumference: 180, cutout: '70%',
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: false }
+        }
+      },
+      plugins: [{
+        id: 'text',
+        beforeDraw(chart) {
+          const {ctx, chartArea: {width}, data} = chart;
+          ctx.save();
+          ctx.font = "16px Arial";
+          ctx.fillStyle = "#000";
+          ctx.textAlign = "center";
+          ctx.fillText(data.datasets[0].data[0] + "%", width/2, 120);
+        }
+      }]
+    });
+
+    // MQTT Subscribe
+    client.on("connect", () => {
+      client.subscribe("flood/boardinghouse01/log");
+    });
+
+    client.on("message", (topic, message) => {
+      const msg = message.toString();
+      const temp   = msg.match(/Nhiet do: ([0-9.]+)/);
+      const hum    = msg.match(/Do am: ([0-9.]+)/);
+      const rain   = msg.match(/Mua RAW: ([0-9.]+)/);
+      const water  = msg.match(/Nuoc RAW: ([0-9.]+)/);
+      const soilRaw= msg.match(/Dat RAW: ([0-9.]+)/);
+      const soil   = msg.match(/\| %: ([0-9.]+)/);
+      const status = msg.match(/Trang thai: ([\w\s]+)/);
+      const led    = msg.match(/LED: (\w+)/);
+      const pump   = msg.match(/Bom: (\w+)/);
+
+      if (temp) {
+        const t = parseFloat(temp[1]);
+        document.getElementById("temp").innerText = t;
+        tempData.push(t); labels.push(new Date().toLocaleTimeString());
+        if (labels.length > 10) { labels.shift(); tempData.shift(); }
+        lineChart.update(); barChart.data.datasets[0].data[0] = t;
+      }
+      if (hum) { const h = parseFloat(hum[1]); document.getElementById("hum").innerText = h; barChart.data.datasets[0].data[1] = h; barChart.update(); }
+      if (rain)   document.getElementById("rain").innerText    = rain[1];
+      if (water)  document.getElementById("water").innerText   = water[1];
+      if (soilRaw)document.getElementById("soilRaw").innerText = soilRaw[1];
+      if (soil)   { const s = parseFloat(soil[1]); document.getElementById("soil").innerText = s; gaugeChart.data.datasets[0].data = [s, 100-s]; gaugeChart.update(); }
+      if (status) { const st = status[1]; document.getElementById("status").innerText = st; updateWeather(st); }
+      if (led)    document.getElementById("led").innerText     = led[1];
+      if (pump)   document.getElementById("pump").innerText    = pump[1];
+    });
+
+    function controlPump(cmd) {
+      client.publish("flood/boardinghouse01/cmd/force_pump", cmd);
+    }
+
+    // Update weather animation theo trạng thái
+    function updateWeather(state) {
+      const box = document.getElementById("weatherBox");
+      box.innerHTML = "";
+      if (state.includes("Kho")) {
+        const sun = document.createElement("div");
+        sun.className = "sun"; box.appendChild(sun);
+      } else if (state.includes("Am")) {
+        const cloud = document.createElement("div");
+        cloud.className = "cloud";
+        cloud.innerHTML = '<div class="c1"></div><div class="c2"></div><div class="c3"></div>';
+        box.appendChild(cloud);
+        for (let i = 0; i < 5; i++) {
+          const drop = document.createElement("div");
+          drop.className = "rain";
+          drop.style.left = (20 + i*15) + "px";
+          drop.style.animationDelay = (i*0.2) + "s";
+          box.appendChild(drop);
+        }
+      } else if (state.includes("Ngap")) {
+        const cloud = document.createElement("div");
+        cloud.className = "cloud";
+        cloud.innerHTML = '<div class="c1" style="background:#555"></div><div class="c2" style="background:#555"></div><div class="c3" style="background:#555"></div>';
+        box.appendChild(cloud);
+        for (let i = 0; i < 15; i++) {
+          const drop = document.createElement("div");
+          drop.className = "rain";
+          drop.style.left = (10 + i*6) + "px";
+          drop.style.animationDelay = (i*0.1) + "s";
+          drop.style.background = "#00f";
+          box.appendChild(drop);
+        }
+      }
+    }
+    
+  </script>
+</body>
+</html>
