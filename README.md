@@ -47,9 +47,3 @@ Dự án sử dụng ESP32 để giám sát nhiệt độ, độ ẩm không kh�
 - Nếu không kết nối được MQTT, kiểm tra lại WiFi và tài khoản HiveMQ.
 - Đảm bảo dây nối cảm biến đúng chân như trong code.
 - Có thể hiệu chỉnh ngưỡng cảm biến trong code cho phù hợp thực tế.
-
----
-
-**Tác giả:**  
-- Thuan  
-- Liên hệ hỗ trợ: qua dashboard
